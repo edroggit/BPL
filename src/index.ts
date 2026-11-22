@@ -1,12 +1,19 @@
 const MAX_COORDINATE = 50;
-const MAX_INSTRUCTION_LENGTH = 100;
+const INSTRUCTION_LENGTH_LIMIT = 100;
+
+export class InvalidInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidInputError";
+  }
+}
 
 export interface Coordinate {
   readonly x: number;
   readonly y: number;
 }
 
-// Orientations are in clockwise order
+// Clockwise order: turning right steps forward, turning left steps back.
 const ORIENTATIONS = ["N", "E", "S", "W"] as const;
 
 type Orientation = (typeof ORIENTATIONS)[number];
@@ -22,20 +29,6 @@ const MOVEMENT_BY_ORIENTATION: Readonly<Record<Orientation, MovementVector>> = {
   S: { dx: 0, dy: -1 },
   W: { dx: -1, dy: 0 },
 };
-
-function getOrientationIndex(orientation: Orientation): number {
-  return ORIENTATIONS.indexOf(orientation);
-}
-
-export function turnLeft(orientation: Orientation): Orientation {
-  const index = getOrientationIndex(orientation);
-  return ORIENTATIONS[(index - 1 + ORIENTATIONS.length) % ORIENTATIONS.length];
-}
-
-export function turnRight(orientation: Orientation): Orientation {
-  const index = getOrientationIndex(orientation);
-  return ORIENTATIONS[(index + 1) % ORIENTATIONS.length];
-}
 
 export class Grid {
   private readonly maxX: number;
@@ -93,145 +86,155 @@ export class Robot {
   }
 
   turnLeft(): void {
-    this.currentOrientation = turnLeft(this.currentOrientation);
+    this.rotate(-1);
   }
 
   turnRight(): void {
-    this.currentOrientation = turnRight(this.currentOrientation);
+    this.rotate(1);
   }
 
+  /** Where the robot would move to next. Doesn't move it. */
   nextCoordinate(): Coordinate {
-    const movement = MOVEMENT_BY_ORIENTATION[this.orientation];
+    const { dx, dy } = MOVEMENT_BY_ORIENTATION[this.currentOrientation];
     return {
-      x: this.currentCoordinate.x + movement.dx,
-      y: this.currentCoordinate.y + movement.dy,
+      x: this.currentCoordinate.x + dx,
+      y: this.currentCoordinate.y + dy,
     };
   }
 
-  moveForward(): void {
+  stepForward(): void {
     this.currentCoordinate = this.nextCoordinate();
   }
 
   markLost(): void {
     this.lost = true;
   }
-}
 
-export interface Command {
-  execute(robot: Robot, grid: Grid): void;
-}
-
-export const TurnLeft: Command = {
-  execute(robot) {
-    robot.turnLeft();
-  },
-};
-
-export const TurnRight: Command = {
-  execute(robot) {
-    robot.turnRight();
-  },
-};
-
-export const MoveForward: Command = {
-  execute(robot, grid) {
-    if (!grid.isOutOfBounds(robot.nextCoordinate())) {
-      robot.moveForward();
-      return;
-    }
-    // dont move off grid if scented
-    if (grid.hasScent(robot.coordinate)) {
-      return;
-    }
-
-    grid.leaveScent(robot.coordinate);
-    robot.markLost();
-  },
-};
-
-export const COMMANDS: ReadonlyMap<string, Command> = new Map([
-  ["L", TurnLeft],
-  ["R", TurnRight],
-  ["F", MoveForward],
-]);
-
-export class InvalidInputError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "InvalidInputError";
+  private rotate(steps: 1 | -1): void {
+    const count = ORIENTATIONS.length;
+    const index = ORIENTATIONS.indexOf(this.currentOrientation);
+    this.currentOrientation = ORIENTATIONS[(index + steps + count) % count];
   }
 }
 
-export class CommandProcessor {
-  constructor(
-    private readonly commands: ReadonlyMap<string, Command> = COMMANDS,
-  ) {}
+type Command = (robot: Robot, grid: Grid) => void;
 
-  execute(robot: Robot, instructions: string, grid: Grid): void {
-    const commands = this.toCommands(instructions);
-
-    for (const command of commands) {
-      if (robot.isLost) {
-        break;
-      }
-      command.execute(robot, grid);
-    }
+/**
+ * Moves the robot one step forward. If that step would leave the grid, the move is
+ * ignored when a scent is already here; otherwise the robot leaves a scent and is lost.
+ */
+export function moveForward(robot: Robot, grid: Grid): void {
+  if (!grid.isOutOfBounds(robot.nextCoordinate())) {
+    robot.stepForward();
+    return;
   }
 
-  private toCommands(instructions: string): Command[] {
-    return [...instructions].map((letter) => {
-      const command = this.commands.get(letter);
-      if (!command) {
-        throw new InvalidInputError(`Unknown instruction "${letter}"`);
-      }
-      return command;
-    });
+  // ignore move if there is a scent from a previous robot
+  if (grid.hasScent(robot.coordinate)) {
+    return;
+  }
+
+  grid.leaveScent(robot.coordinate);
+  robot.markLost();
+}
+
+/**
+ * Maps each instruction letter to its command. To add a command, write a function
+ * that matches `Command` and give it a letter here. Parsing and running pick it up automatically.
+ */
+const COMMANDS: Readonly<Record<string, Command>> = {
+  L: (robot) => robot.turnLeft(),
+  R: (robot) => robot.turnRight(),
+  F: moveForward,
+};
+
+function executeInstructions(
+  robot: Robot,
+  instructions: string,
+  grid: Grid,
+): void {
+  for (const letter of instructions) {
+    if (robot.isLost) {
+      break;
+    }
+    COMMANDS[letter](robot, grid);
   }
 }
 
-function parseCoordinateValue(text: string | undefined, line: string): number {
-  const value = Number(text);
-  if (
-    text === undefined ||
-    !Number.isInteger(value) ||
-    value < 0 ||
-    value > MAX_COORDINATE
-  ) {
-    throw new InvalidInputError(`Invalid coordinate "${text}" in: ${line}`);
+// The exact shape of each line: whole numbers only, and nothing extra.
+const GRID_LINE = /^(\d+)\s+(\d+)$/;
+const ROBOT_LINE = /^(\d+)\s+(\d+)\s+([NESW])$/;
+
+function parseCoordinateValue(digits: string, line: string): number {
+  const value = Number(digits);
+  if (value > MAX_COORDINATE) {
+    throw new InvalidInputError(
+      `Coordinate ${value} is over ${MAX_COORDINATE} in: ${line}`,
+    );
   }
   return value;
 }
 
 function parseGrid(line: string): Grid {
-  const [x, y] = line.split(/\s+/);
-  const maxX = parseCoordinateValue(x, line);
-  const maxY = parseCoordinateValue(y, line);
-  return new Grid(maxX, maxY);
+  const match = GRID_LINE.exec(line);
+  if (!match) {
+    throw new InvalidInputError(`Invalid grid line (expected "x y"): ${line}`);
+  }
+  const [, x, y] = match;
+  return new Grid(parseCoordinateValue(x, line), parseCoordinateValue(y, line));
 }
 
 function parseRobot(line: string, grid: Grid): Robot {
-  const [x, y, orientation] = line.split(/\s+/);
-  const xValue = parseCoordinateValue(x, line);
-  const yValue = parseCoordinateValue(y, line);
-  if (grid.isOutOfBounds({ x: xValue, y: yValue })) {
+  const match = ROBOT_LINE.exec(line);
+  if (!match) {
+    throw new InvalidInputError(
+      `Invalid robot line (expected "x y N|E|S|W"): ${line}`,
+    );
+  }
+  const [, x, y, orientation] = match;
+  const coordinate = {
+    x: parseCoordinateValue(x, line),
+    y: parseCoordinateValue(y, line),
+  };
+
+  if (grid.isOutOfBounds(coordinate)) {
     throw new InvalidInputError(`Robot position out of bounds: ${line}`);
   }
-  if (!ORIENTATIONS.includes(orientation as Orientation)) {
-    throw new InvalidInputError(`Invalid robot orientation: ${line}`);
-  }
-  return new Robot({ x: xValue, y: yValue }, orientation as Orientation);
+  // ROBOT_LINE only matches N, E, S or W so this cast is safe.
+  return new Robot(coordinate, orientation as Orientation);
 }
 
 function parseInstructions(line: string): string {
-  if (line.length >= MAX_INSTRUCTION_LENGTH) {
-    throw new InvalidInputError(`Invalid instruction length: ${line}`);
+  if (line.length >= INSTRUCTION_LENGTH_LIMIT) {
+    throw new InvalidInputError(
+      `Instructions must be under ${INSTRUCTION_LENGTH_LIMIT} characters: ${line}`,
+    );
+  }
+  const unknownLetter = [...line].find(
+    (letter) => !Object.hasOwn(COMMANDS, letter),
+  );
+  if (unknownLetter !== undefined) {
+    throw new InvalidInputError(
+      `Unknown instruction "${unknownLetter}" in: ${line}`,
+    );
   }
   return line;
 }
 
-type RobotPlan = { robot: Robot; instructions: string };
-type Mission = { grid: Grid; robotPlans: RobotPlan[] };
+interface RobotPlan {
+  robot: Robot;
+  instructions: string;
+}
 
+interface Mission {
+  grid: Grid;
+  robotPlans: RobotPlan[];
+}
+
+/**
+ * Parses and checks the whole input before anything runs.
+ * @throws {InvalidInputError} if any line is invalid.
+ */
 export function parseMissionInput(input: string): Mission {
   // Blank lines (e.g. between robots) are ignored; \r handles Windows line endings.
   const lines = input
@@ -242,40 +245,41 @@ export function parseMissionInput(input: string): Mission {
   if (gridLine === undefined) {
     throw new InvalidInputError("Input is empty");
   }
+
   const grid = parseGrid(gridLine);
   const robotPlans: RobotPlan[] = [];
   for (let i = 0; i < robotLines.length; i += 2) {
     const robotLine = robotLines[i];
     const instructionLine = robotLines[i + 1];
-    if (!robotLine || !instructionLine) {
-      throw new InvalidInputError(`Invalid robot input: ${input}`);
+    if (instructionLine === undefined) {
+      throw new InvalidInputError(
+        `Missing instructions for robot: ${robotLine}`,
+      );
     }
-    const robot = parseRobot(robotLine, grid);
-    const instructions = parseInstructions(instructionLine);
-    robotPlans.push({ robot, instructions });
+    robotPlans.push({
+      robot: parseRobot(robotLine, grid),
+      instructions: parseInstructions(instructionLine),
+    });
   }
   return { grid, robotPlans };
 }
 
 function formatRobotStatus(robot: Robot): string {
-  return `${robot.coordinate.x} ${robot.coordinate.y} ${robot.orientation}${robot.isLost ? " LOST" : ""}`;
+  const status = `${robot.coordinate.x} ${robot.coordinate.y} ${robot.orientation}`;
+  return robot.isLost ? `${status} LOST` : status;
 }
 
-export function formatMissionOutput(mission: Mission): string {
-  return mission.robotPlans
-    .map(({ robot }) => formatRobotStatus(robot))
-    .join("\n");
-}
-
-export function executeMission(mission: Mission): void {
-  const processor = new CommandProcessor();
-  for (const { robot, instructions } of mission.robotPlans) {
-    processor.execute(robot, instructions, mission.grid);
-  }
-}
-
+/**
+ * Runs each robot in turn on the same grid, so scents carry over, and returns one result line per robot.
+ * @throws {InvalidInputError} if the input is invalid.
+ */
 export function runMission(input: string): string {
-  const mission = parseMissionInput(input);
-  executeMission(mission);
-  return formatMissionOutput(mission);
+  const { grid, robotPlans } = parseMissionInput(input);
+
+  const results: string[] = [];
+  for (const { robot, instructions } of robotPlans) {
+    executeInstructions(robot, instructions, grid);
+    results.push(formatRobotStatus(robot));
+  }
+  return results.join("\n");
 }

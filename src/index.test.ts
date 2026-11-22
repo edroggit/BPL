@@ -1,41 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  type Command,
-  COMMANDS,
-  CommandProcessor,
   Grid,
   InvalidInputError,
-  MoveForward,
+  moveForward,
   parseMissionInput,
   Robot,
   runMission,
-  TurnLeft,
-  TurnRight,
-  turnLeft,
-  turnRight,
 } from "./index";
-
-describe("turnLeft", () => {
-  it.each([
-    ["N", "W"],
-    ["W", "S"],
-    ["S", "E"],
-    ["E", "N"],
-  ] as const)("turns left from %s to %s", (start, expected) => {
-    expect(turnLeft(start)).toBe(expected);
-  });
-});
-
-describe("turnRight", () => {
-  it.each([
-    ["N", "E"],
-    ["E", "S"],
-    ["S", "W"],
-    ["W", "N"],
-  ] as const)("turns right from %s to %s", (start, expected) => {
-    expect(turnRight(start)).toBe(expected);
-  });
-});
 
 describe("Grid", () => {
   const createGrid = () => new Grid(5, 3);
@@ -86,24 +57,31 @@ describe("Robot", () => {
   it("moves forward one step in the direction it faces", () => {
     const robot = new Robot({ x: 2, y: 2 }, "N");
 
-    robot.moveForward();
+    robot.stepForward();
 
     expect(robot.coordinate).toEqual({ x: 2, y: 3 });
     expect(robot.orientation).toBe("N");
   });
 
-  it("turns without moving", () => {
-    const robot = new Robot({ x: 2, y: 2 }, "N");
+  it.each([
+    { start: "N", left: "W", right: "E" },
+    { start: "E", left: "N", right: "S" },
+    { start: "S", left: "E", right: "W" },
+    { start: "W", left: "S", right: "N" },
+  ] as const)(
+    "turns from $start to $left (left) or $right (right) without moving",
+    ({ start, left, right }) => {
+      const turningLeft = new Robot({ x: 2, y: 2 }, start);
+      const turningRight = new Robot({ x: 2, y: 2 }, start);
 
-    robot.turnRight();
-    expect(robot.orientation).toBe("E");
+      turningLeft.turnLeft();
+      turningRight.turnRight();
 
-    robot.turnLeft();
-    robot.turnLeft();
-    expect(robot.orientation).toBe("W");
-
-    expect(robot.coordinate).toEqual({ x: 2, y: 2 });
-  });
+      expect(turningLeft.orientation).toBe(left);
+      expect(turningRight.orientation).toBe(right);
+      expect(turningLeft.coordinate).toEqual({ x: 2, y: 2 });
+    },
+  );
 
   it("starts not lost and stays where it is when marked lost", () => {
     const robot = new Robot({ x: 2, y: 2 }, "N");
@@ -116,28 +94,12 @@ describe("Robot", () => {
   });
 });
 
-describe("TurnLeft and TurnRight", () => {
-  it("turn the robot without moving it", () => {
-    const grid = new Grid(5, 3);
-    const robot = new Robot({ x: 2, y: 2 }, "N");
-
-    TurnRight.execute(robot, grid);
-    expect(robot.orientation).toBe("E");
-
-    TurnLeft.execute(robot, grid);
-    TurnLeft.execute(robot, grid);
-    expect(robot.orientation).toBe("W");
-
-    expect(robot.coordinate).toEqual({ x: 2, y: 2 });
-  });
-});
-
-describe("MoveForward", () => {
+describe("moveForward", () => {
   it("moves the robot when the next point is on the grid", () => {
     const grid = new Grid(5, 3);
     const robot = new Robot({ x: 2, y: 2 }, "N");
 
-    MoveForward.execute(robot, grid);
+    moveForward(robot, grid);
 
     expect(robot.coordinate).toEqual({ x: 2, y: 3 });
     expect(robot.isLost).toBe(false);
@@ -147,7 +109,7 @@ describe("MoveForward", () => {
     const grid = new Grid(5, 3);
     const robot = new Robot({ x: 5, y: 3 }, "N");
 
-    MoveForward.execute(robot, grid);
+    moveForward(robot, grid);
 
     expect(robot.isLost).toBe(true);
     expect(robot.coordinate).toEqual({ x: 5, y: 3 });
@@ -159,7 +121,7 @@ describe("MoveForward", () => {
     grid.leaveScent({ x: 5, y: 3 });
     const robot = new Robot({ x: 5, y: 3 }, "N");
 
-    MoveForward.execute(robot, grid);
+    moveForward(robot, grid);
 
     expect(robot.isLost).toBe(false);
     expect(robot.coordinate).toEqual({ x: 5, y: 3 });
@@ -170,61 +132,10 @@ describe("MoveForward", () => {
     grid.leaveScent({ x: 5, y: 3 });
     const robot = new Robot({ x: 5, y: 3 }, "S");
 
-    MoveForward.execute(robot, grid);
+    moveForward(robot, grid);
 
     expect(robot.coordinate).toEqual({ x: 5, y: 2 });
     expect(robot.isLost).toBe(false);
-  });
-});
-
-describe("CommandProcessor", () => {
-  it("runs every instruction in order", () => {
-    const grid = new Grid(5, 3);
-    const robot = new Robot({ x: 1, y: 1 }, "E");
-
-    new CommandProcessor().execute(robot, "RFRFRFRF", grid);
-
-    expect(robot.coordinate).toEqual({ x: 1, y: 1 });
-    expect(robot.orientation).toBe("E");
-    expect(robot.isLost).toBe(false);
-  });
-
-  it("ignores the remaining instructions once the robot is lost", () => {
-    const grid = new Grid(5, 3);
-    const robot = new Robot({ x: 5, y: 3 }, "N");
-
-    new CommandProcessor().execute(robot, "FRF", grid);
-
-    expect(robot.isLost).toBe(true);
-    expect(robot.coordinate).toEqual({ x: 5, y: 3 });
-    expect(robot.orientation).toBe("N");
-  });
-
-  it("rejects an unknown instruction before moving the robot", () => {
-    const grid = new Grid(5, 3);
-    const robot = new Robot({ x: 2, y: 2 }, "N");
-
-    expect(() => new CommandProcessor().execute(robot, "FFXF", grid)).toThrow(
-      InvalidInputError,
-    );
-    expect(robot.coordinate).toEqual({ x: 2, y: 2 });
-  });
-
-  it("uses commands from a custom registry", () => {
-    const TurnAround: Command = {
-      execute(robot) {
-        robot.turnRight();
-        robot.turnRight();
-      },
-    };
-    const commands = new Map([...COMMANDS, ["U", TurnAround]]);
-    const grid = new Grid(5, 3);
-    const robot = new Robot({ x: 2, y: 2 }, "N");
-
-    new CommandProcessor(commands).execute(robot, "UF", grid);
-
-    expect(robot.orientation).toBe("S");
-    expect(robot.coordinate).toEqual({ x: 2, y: 1 });
   });
 });
 
@@ -272,11 +183,16 @@ describe("parseMissionInput", () => {
 
   it.each([
     ["a non-numeric grid size", "a b\n1 1 E\nF"],
+    ["a grid line with an extra value", "5 3 7\n1 1 E\nF"],
+    ["a grid size in scientific notation", "1e1 3\n1 1 E\nF"],
+    ["a grid size in hexadecimal", "0x5 3\n1 1 E\nF"],
+    ["a robot line with extra text", "5 3\n1 1 E extra\nF"],
     ["a grid coordinate over 50", "51 3\n1 1 E\nF"],
     ["a non-numeric robot coordinate", "5 3\na b E\nF"],
     ["a robot that starts off the grid", "5 3\n6 1 E\nF"],
     ["an unknown orientation", "5 3\n1 1 Q\nF"],
     ["instructions of 100 characters", `5 3\n1 1 E\n${"F".repeat(100)}`],
+    ["an unknown instruction letter", "5 3\n1 1 E\nFX"],
     ["a robot with no instruction line", "5 3\n1 1 E"],
     ["empty input", ""],
   ])("rejects %s", (_description, input) => {
@@ -295,7 +211,7 @@ describe("runMission", () => {
     expect(runMission(input)).toBe("0 3 N LOST\n0 3 E");
   });
 
-  it("rejects an unknown instruction", () => {
-    expect(() => runMission("5 3\n1 1 E\nFX")).toThrow(InvalidInputError);
+  it("ignores the remaining instructions once a robot is lost", () => {
+    expect(runMission("5 3\n5 3 N\nFRF")).toBe("5 3 N LOST");
   });
 });
