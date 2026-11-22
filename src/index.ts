@@ -148,6 +148,7 @@ const COMMANDS: Readonly<Record<string, Command>> = {
   F: moveForward,
 };
 
+// Only called after parseInstructions has checked every letter, so each one is in COMMANDS.
 function executeInstructions(
   robot: Robot,
   instructions: string,

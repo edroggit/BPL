@@ -4,7 +4,7 @@ A TypeScript solution to the Martian Robots problem. Robots move around a rectan
 
 ## Requirements
 
-- Node.js 22.12 or later
+- Node.js 22.12+, 24 or 26+ (the versions Vitest supports)
 
 ## Setup
 
@@ -78,4 +78,4 @@ All the logic is in `src/index.ts`. `src/cli.ts` is a thin wrapper that handles 
 - **Error messages don't include line numbers.** They include the offending line's text, which is enough for input this size.
 - **No extra commands.** The brief only asks to make room for them, so `COMMANDS` is where they'd go. I didn't build any.
 - **Robots can occupy the same point.** The brief doesn't mention collisions, so robots don't check for each other.
-- **Improve input readability** I have stuck with the recommended input for the challenge but as this grows it would quickly become difficult to follow. In the future it might be better to make a cleaner cli tool or even a proper ui, a proper ui could then be extended to track robot moves and display the grid.
+- **Easier-to-follow input.** I stuck with the input format from the challenge, but it would quickly become hard to follow as missions grow. A friendlier CLI, or even a simple UI, would help. A UI could also be extended to track each robot's moves and display the grid.
